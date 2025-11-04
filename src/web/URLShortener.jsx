@@ -9,9 +9,9 @@ import {
 
 function normalizeUrl(raw) {
   if (!raw) return "";
-  const trimmed = raw.trim();
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  const t = raw.trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  return `https://${t}`;
 }
 
 function isValidUrl(value) {
@@ -25,38 +25,23 @@ function isValidUrl(value) {
 
 function shortHash(str) {
   let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  }
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
   const base62 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
   let out = "";
-  do {
-    out = base62[h % 62] + out;
-    h = Math.floor(h / 62);
-  } while (h > 0);
+  do { out = base62[h % 62] + out; h = Math.floor(h / 62); } while (h > 0);
   return out.slice(0, 6);
 }
 
 const CACHE_KEY = "urlshort_cache_v1";
 const HISTORY_KEY = "urlshort_history_v1";
+const SLUG_MAP_KEY = "urlshort_slugmap_v1";
 
-function readCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); }
-  catch { return {}; }
-}
-
-function writeCache(obj) {
-  localStorage.setItem(CACHE_KEY, JSON.stringify(obj));
-}
-
-function readHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
-  catch { return []; }
-}
-
-function writeHistory(arr) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
-}
+const readCache = () => { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); } catch { return {}; } };
+const writeCache = (obj) => localStorage.setItem(CACHE_KEY, JSON.stringify(obj));
+const readHistory = () => { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; } };
+const writeHistory = (arr) => localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
+const readSlugMap = () => { try { return JSON.parse(localStorage.getItem(SLUG_MAP_KEY) || "{}"); } catch { return {}; } };
+const writeSlugMap = (obj) => localStorage.setItem(SLUG_MAP_KEY, JSON.stringify(obj));
 
 export default function URLShortener() {
   const [url, setUrl] = useState("");
@@ -69,21 +54,13 @@ export default function URLShortener() {
 
   const canShorten = useMemo(() => isValidUrl(url), [url]);
 
-  useEffect(() => {
-    if (!shortUrl) setCopied(false);
-  }, [shortUrl]);
+  useEffect(() => { if (!shortUrl) setCopied(false); }, [shortUrl]);
 
   useEffect(() => {
     if (showToast) {
-      const fadeTimer = setTimeout(() => setToastFading(true), 2700);
-      const hideTimer = setTimeout(() => {
-        setShowToast(false);
-        setToastFading(false);
-      }, 3000);
-      return () => {
-        clearTimeout(fadeTimer);
-        clearTimeout(hideTimer);
-      };
+      const a = setTimeout(() => setToastFading(true), 2700);
+      const b = setTimeout(() => { setShowToast(false); setToastFading(false); }, 3000);
+      return () => { clearTimeout(a); clearTimeout(b); };
     }
   }, [showToast]);
 
@@ -91,20 +68,21 @@ export default function URLShortener() {
     if (!canShorten) return;
     setLoading(true);
     const normalized = normalizeUrl(url);
+    const id = shortHash(normalized);
+    const short = `${window.location.origin}/${id}`;
+
     const cache = readCache();
-    let short = cache[normalized];
-    if (!short) {
-      const id = shortHash(normalized);
-      short = `short.link/${id}`;
-      cache[normalized] = short;
-      writeCache(cache);
-    }
-    await new Promise(resolve => setTimeout(resolve, 500));
+    cache[normalized] = short;
+    writeCache(cache);
+
+    const slugMap = readSlugMap();
+    slugMap[id] = normalized;
+    writeSlugMap(slugMap);
+
+    await new Promise(r => setTimeout(r, 500));
     setShortUrl(short);
-    const next = [
-      { long: normalized, short, ts: Date.now() },
-      ...history.filter(h => h.long !== normalized),
-    ].slice(0, 10);
+
+    const next = [{ long: normalized, short, ts: Date.now(), id }, ...history.filter(h => h.long !== normalized)].slice(0, 10);
     setHistory(next);
     writeHistory(next);
     setLoading(false);
@@ -119,9 +97,16 @@ export default function URLShortener() {
   };
 
   const handleDeleteItem = (longUrl) => {
+    const item = history.find(h => h.long === longUrl);
     const next = history.filter(h => h.long !== longUrl);
     setHistory(next);
     writeHistory(next);
+    if (item?.id) {
+      const map = readSlugMap();
+      if (map[item.id]) { delete map[item.id]; writeSlugMap(map); }
+    }
+    const cache = readCache();
+    if (cache[longUrl]) { delete cache[longUrl]; writeCache(cache); }
   };
 
   const handleClearHistory = () => {
